@@ -1,0 +1,32 @@
+# /etc/containers/systemd/backup.quadlet
+[Unit]
+Description=PostgreSQL Backup Container
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+# Make sure you have built the image with 'podman build -t postgres-backup:latest .'
+Image=localhost/postgres-backup:latest
+Exec=ruby /app/backup.rb backup
+
+# Mount the host directory for backups into the container
+Volume=/path/on/host/backups:/backups:Z
+
+# Mount a directory for restores (needed for the restore command)
+Volume=/path/on/host/restore:/restore:Z
+
+# Pass PostgreSQL connection details via an environment file for security
+# Create this file at /etc/default/postgres-backup on the host
+# Example content of the file:
+# PGHOST=your-db-host
+# PGUSER=backup_user
+# PGPASSWORD=your_secret_password
+# PGDATABASE=postgres
+# FULL_BACKUP_INTERVAL_DAYS=14
+# KEEP_CHAINS=1
+EnvironmentFile=/etc/default/postgres-backup
+
+[Service]
+# On failure, restart the service after a delay
+Restart=on-failure
+RestartSec=30s
