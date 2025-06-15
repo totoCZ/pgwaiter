@@ -15,10 +15,7 @@ RUN apt-get update \
     # Update package lists again to include the new repository
     && apt-get update \
     # Install the specific PG17 client package
-    && apt-get -y install apt-file \
-    && apt-file update \
-    && apt-file search pg_combinebackup \
-    && apt-get install -y --no-install-recommends postgresql-17-client \
+    && apt-get install -y --no-install-recommends postgresql-client-17 \
     # Clean up to keep the image small
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
