@@ -16,6 +16,7 @@ RUN apt-get update \
     && apt-get update \
     # Install the specific PG17 client package
     && apt-get -y install apt-file \
+    && apt-file update \
     && apt-file search pg_combinebackup \
     && apt-get install -y --no-install-recommends postgresql-17-client \
     # Clean up to keep the image small
