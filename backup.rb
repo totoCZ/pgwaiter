@@ -99,7 +99,7 @@ def perform_backup
 
   # Construct pg_basebackup command using the helper
   # It automatically uses PGPASSWORD, PGUSER, PGHOST, etc.
-  base_cmd = "#{pg_command('pg_basebackup')} --verbose --pgdata='#{current_backup_path}' --format=p --wal-method=fetch"
+  base_cmd = "#{pg_command('pg_basebackup')} --verbose --pgdata='#{current_backup_path}' --format=p"
   
   if is_full_backup
     execute_command(base_cmd)
