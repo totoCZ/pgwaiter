@@ -1,4 +1,4 @@
-# /etc/containers/systemd/backup.quadlet
+# /etc/containers/systemd/backup.container
 [Unit]
 Description=PostgreSQL Backup Container
 Wants=network-online.target
