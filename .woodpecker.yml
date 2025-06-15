@@ -1,0 +1,20 @@
+when:
+  event: [push, manual]
+  branch: ${CI_REPO_DEFAULT_BRANCH}
+
+steps:
+  container:
+    image: quay.io/buildah/stable:latest
+    privileged: true
+    volumes:
+      - ci-cache:/var/lib/containers/storage
+      - /etc/containers/registries.conf.d/:/etc/containers/registries.conf.d/
+    environment:
+      PASSWORD:
+        from_secret: forgejo_token
+    commands:
+      - export REGISTRY=forgejo.pod.hetmer.net
+      - export IMAGE=$REGISTRY/${CI_REPO_OWNER}/${CI_REPO_NAME}:latest
+      - buildah login -u "${CI_REPO_OWNER}" -p "$PASSWORD" $REGISTRY
+      - buildah bud -t $IMAGE .
+      - buildah push $IMAGE
