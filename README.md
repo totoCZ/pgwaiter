@@ -72,12 +72,12 @@ sudo chmod 600 /etc/default/postgres-backup
 
 ### Step 3: Install Quadlet Files
 
-Copy the `.quadlet` and `.timer` files to the systemd user or system location. For system-wide services, use `/etc/containers/systemd/`.
+Copy the `.container` and `.timer` files to the systemd user or system location. For system-wide services, use `/etc/containers/systemd/`.
 
-First, edit `backup.quadlet` to use the correct host paths:
+First, edit `backup.container` to use the correct host paths:
 
 ```ini
-# In backup.quadlet, change these lines:
+# In backup.container, change these lines:
 ...
 Volume=/var/lib/pgbackups/data:/backups:Z
 Volume=/var/lib/pgbackups/restore:/restore:Z
@@ -88,7 +88,7 @@ Now, copy the files and reload systemd:
 
 ```bash
 # As root, or with sudo
-cp backup.quadlet /etc/containers/systemd/
+cp backup.container /etc/containers/systemd/
 cp backup.timer /etc/containers/systemd/
 
 # Reload systemd to recognize the new files
