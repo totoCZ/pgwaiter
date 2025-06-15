@@ -1,5 +1,5 @@
 # Use a slim, modern Ruby base image
-FROM ruby:3.4-slim
+FROM docker.io/ruby:3.4-slim
 
 # Install PostgreSQL client utilities, which include pg_basebackup and pg_combinebackup
 # Using bookworm (Debian 12) which has PG15 client tools, compatible with PG17 server.
