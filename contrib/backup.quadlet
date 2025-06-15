@@ -7,7 +7,7 @@ After=network-online.target
 [Container]
 # Make sure you have built the image with 'podman build -t postgres-backup:latest .'
 Image=localhost/postgres-backup:latest
-Exec=ruby /app/backup.rb backup
+Exec=backup
 
 # Mount the host directory for backups into the container
 Volume=/path/on/host/backups:/backups:Z
