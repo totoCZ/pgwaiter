@@ -19,7 +19,7 @@ It is designed to be run via `podman` and integrated with `systemd` using Quadle
 - A dedicated PostgreSQL user with the `pg_read_all_data` role (or superuser privileges).
 - `podman` installed on the host machine.
 - A host OS that uses `systemd` (e.g., Fedora, CentOS, Ubuntu 22.04+).
-- postgres with summarize_wal, and wal_summary_keep_time greater than interval between increments
+- postgres with summarize_wal, and wal_summary_keep_time greater than interval between increments (default 10d is enough)
 
 ## 1. Setup
 
