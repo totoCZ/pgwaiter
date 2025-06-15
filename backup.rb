@@ -13,11 +13,22 @@ RESTORE_DIR = '/restore'
 FULL_BACKUP_INTERVAL_DAYS = (ENV['FULL_BACKUP_INTERVAL_DAYS'] || 14).to_i
 KEEP_CHAINS = (ENV['KEEP_CHAINS'] || 1).to_i # Number of *past* chains to keep
 
+# Default to the path for Postgres 17 client tools, which are not always in the main PATH.
+PG_BIN_DIR = ENV['PG_BIN_DIR'] || '/usr/lib/postgresql/17/bin'
+
 # --- Helper Functions ---
 
 # Logs a message to standard output.
 def log(message)
   puts "#{message}"
+end
+
+# Constructs the full command path, making the script independent of the system's PATH.
+def pg_command(name)
+  # If PG_BIN_DIR is configured, use it to build the full path.
+  return File.join(PG_BIN_DIR, name) if PG_BIN_DIR && !PG_BIN_DIR.empty?
+  # Otherwise, fall back to the original behavior and hope it's in the PATH.
+  name
 end
 
 # Executes a system command, streaming its output and checking for success.
@@ -86,9 +97,9 @@ def perform_backup
   FileUtils.mkdir_p(current_backup_path)
   log "Created backup directory: #{current_backup_path}"
 
-  # Construct pg_basebackup command
+  # Construct pg_basebackup command using the helper
   # It automatically uses PGPASSWORD, PGUSER, PGHOST, etc.
-  base_cmd = "pg_basebackup --verbose --pgdata='#{current_backup_path}' --format=p --wal-method=fetch"
+  base_cmd = "#{pg_command('pg_basebackup')} --verbose --pgdata='#{current_backup_path}' --format=p --wal-method=fetch"
   
   if is_full_backup
     execute_command(base_cmd)
@@ -170,9 +181,9 @@ def perform_restore(target_backup_path)
   FileUtils.mkdir_p(RESTORE_DIR)
   log "Cleaned and created restore directory: #{RESTORE_DIR}"
 
-  # Construct and run pg_combinebackup command
+  # Construct and run pg_combinebackup command using the helper
   # The list of directories must be passed as separate arguments.
-  cmd = "pg_combinebackup -o '#{RESTORE_DIR}' #{restore_chain.join(' ')}"
+  cmd = "#{pg_command('pg_combinebackup')} -o '#{RESTORE_DIR}' #{restore_chain.join(' ')}"
   execute_command(cmd)
 
   log "Restore complete. Data is available in #{RESTORE_DIR}"
@@ -196,6 +207,7 @@ def show_help
     Configuration via Environment Variables:
       FULL_BACKUP_INTERVAL_DAYS : Days between full backups (default: 14)
       KEEP_CHAINS               : Number of past backup chains to keep (default: 1)
+      PG_BIN_DIR                : Path to PostgreSQL binaries (e.g., /usr/lib/postgresql/17/bin)
       PG*                       : Standard PostgreSQL variables (PGHOST, PGUSER, PGPASSWORD, etc.)
   HELP
 end
