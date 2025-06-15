@@ -17,7 +17,7 @@ KEEP_CHAINS = (ENV['KEEP_CHAINS'] || 1).to_i # Number of *past* chains to keep
 
 # Logs a message to standard output.
 def log(message)
-  puts "[#{Time.now.utc.iso8601}] #{message}"
+  puts "#{message}"
 end
 
 # Executes a system command, streaming its output and checking for success.
