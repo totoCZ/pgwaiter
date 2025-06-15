@@ -1,0 +1,17 @@
+# /etc/containers/systemd/backup.timer
+[Unit]
+Description=Daily timer for PostgreSQL backup service
+
+[Timer]
+# Run daily at 2:00 AM local time
+OnCalendar=daily
+# Or for a specific time: OnCalendar=*-*-* 02:00:00
+
+# Run 15 minutes after boot, in case the scheduled time was missed
+OnBootSec=15min
+
+# If the timer was missed, run the job as soon as possible
+Persistent=true
+
+[Install]
+WantedBy=timers.target
