@@ -56,23 +56,32 @@ def find_latest_backup():
         return None
 
 def prune_old_backups():
-    """Deletes backup sets older than RETENTION_DAYS."""
+    """
+    Deletes backup sets older than RETENTION_DAYS, but NEVER deletes the
+    most recent full backup set.
+    """
     log("--- Starting Pruning Process ---")
     retention_delta = timedelta(days=RETENTION_DAYS)
     now = datetime.now()
 
     try:
+        # Get all directories and sort them chronologically
         all_dirs = sorted([d for d in os.listdir(BACKUP_DIR) if os.path.isdir(os.path.join(BACKUP_DIR, d))])
     except FileNotFoundError:
         log("Backup directory not found. Nothing to prune.")
         return
 
-    full_backups = [d for d in all_dirs if d.endswith("_full")]
-    if not full_backups:
-        log("No full backups found. Nothing to prune.")
+    # Identify all the full backups
+    full_backups = sorted([d for d in all_dirs if d.endswith("_full")])
+
+    # If there's only one full backup set (or none), we can't prune anything.
+    if len(full_backups) <= 1:
+        log("Only one (or zero) full backup set exists. Skipping pruning.")
         return
 
-    for i, full_backup_name in enumerate(full_backups):
+    # We only consider old backup sets for deletion, not the current one.
+    # So we iterate up to the second-to-last full backup.
+    for i, full_backup_name in enumerate(full_backups[:-1]):
         try:
             backup_date_str = full_backup_name.split('T')[0]
             backup_date = datetime.strptime(backup_date_str, '%Y-%m-%d')
@@ -80,18 +89,17 @@ def prune_old_backups():
             log(f"Could not parse date from directory: {full_backup_name}. Skipping.")
             continue
 
+        # Check if the full backup is older than the retention period
         if now - backup_date > retention_delta:
-            log(f"Full backup '{full_backup_name}' is older than {RETENTION_DAYS} days. Preparing to delete set.")
+            log(f"Full backup '{full_backup_name}' is older than {RETENTION_DAYS} days and is superseded. Preparing to delete set.")
 
-            # Define the range of this backup set
+            # The set to be deleted starts with this full backup and ends
+            # just before the next full backup begins.
             start_dir = full_backup_name
-            end_dir = full_backups[i+1] if i + 1 < len(full_backups) else None
+            end_dir = full_backups[i+1] # The next full backup in the list
 
             # Find all directories in this set to delete
-            dirs_to_delete = []
-            for d in all_dirs:
-                if d >= start_dir and (end_dir is None or d < end_dir):
-                    dirs_to_delete.append(d)
+            dirs_to_delete = [d for d in all_dirs if d >= start_dir and d < end_dir]
 
             for d_to_delete in dirs_to_delete:
                 dir_path = os.path.join(BACKUP_DIR, d_to_delete)
