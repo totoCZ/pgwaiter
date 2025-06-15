@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install PostgreSQL APT repository to get a specific client version
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        ca-certificates \
         curl \
         gnupg && \
     curl -sS https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
