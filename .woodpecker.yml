@@ -12,9 +12,13 @@ steps:
     environment:
       PASSWORD:
         from_secret: forgejo_token
+      PASSWORD_GITHUB:
+        from_secret: github_login
     commands:
       - export REGISTRY=forgejo.pod.hetmer.net
       - export IMAGE=$REGISTRY/${CI_REPO_OWNER}/${CI_REPO_NAME}:latest
       - buildah login -u "${CI_REPO_OWNER}" -p "$PASSWORD" $REGISTRY
       - buildah bud -t $IMAGE .
       - buildah push $IMAGE
+      - buildah login -u totoCZ -p "$PASSWORD_GITHUB" ghcr.io
+      - buildah push ghcr.io/totoCZ/${CI_REPO_NAME}:latest
