@@ -6,20 +6,21 @@ It is designed to be run via `podman` and integrated with `systemd` using Quadle
 
 ## Features
 
-- **Automated Backup Strategy**: Performs a full backup periodically (e.g., every 14 days) and incremental backups on all other days.
-- **Chain-Based Pruning**: Safely removes old backup chains (a full backup and its subsequent incrementals), keeping a configurable number of recent chains.
-- **Simple Restore**: Can restore from any backup in a chain (full or incremental) to a target directory using `pg_combinebackup`.
-- **Containerized**: Runs inside a `podman` container, isolating dependencies.
-- **Systemd Integration**: Uses Quadlet files for easy and robust scheduling with `systemd`.
-- **Clear Metadata**: Avoids fragile filesystem parsing by saving its own `metadata.json` inside each backup folder.
+-   **Automated Backup Strategy**: Performs a full backup periodically (e.g., every 14 days) and incremental backups on all other days.
+-   **Flexible Time-Based Retention**: Independently configure how long to keep full backups (and their dependent chains) and how long to keep granular incremental backups. This allows for strategies like keeping daily backups for a week and full backups for a month.
+-   **Safety-First Pruning**: The currently active backup chain is **never** touched by the pruning process, ensuring you can always restore from the most recent set of backups.
+-   **Simple Restore**: Can restore from any backup in a chain (full or incremental) to a target directory using `pg_combinebackup`.
+-   **Containerized**: Runs inside a `podman` container, isolating dependencies.
+-   **Systemd Integration**: Uses Quadlet files for easy and robust scheduling with `systemd`.
+-   **Clear Metadata**: Avoids fragile filesystem parsing by saving its own `metadata.json` inside each backup folder.
 
 ## Prerequisites
 
-- A running PostgreSQL 17+ server.
-- A dedicated PostgreSQL user with the `pg_read_all_data` role (or superuser privileges).
-- `podman` installed on the host machine.
-- A host OS that uses `systemd` (e.g., Fedora, CentOS, Ubuntu 22.04+).
-- postgres with summarize_wal, and wal_summary_keep_time greater than interval between increments (default 10d is enough)
+-   A running PostgreSQL 17+ server.
+-   A dedicated PostgreSQL user with the `pg_read_all_data` role (or superuser privileges).
+-   `podman` installed on the host machine.
+-   A host OS that uses `systemd` (e.g., Fedora, CentOS, Ubuntu 22.04+).
+-   Postgres configured with `summarize_wal` enabled and `wal_summary_keep_time` greater than the interval between your incremental backups (the default of `10d` is usually sufficient for daily backups).
 
 ## 1. Setup
 
@@ -45,7 +46,7 @@ sudo mkdir -p /etc/default
 sudo touch /etc/default/postgres-backup
 ```
 
-Edit the environment file `/etc/default/postgres-backup` with your database connection details:
+Edit the environment file `/etc/default/postgres-backup` with your database connection details and desired retention policy:
 
 ```ini
 # /etc/default/postgres-backup
@@ -55,13 +56,18 @@ PGUSER=backup_user
 PGPASSWORD=your_super_secret_password
 PGDATABASE=postgres
 
-# --- Optional: Script Configuration ---
+# --- Backup Strategy Configuration ---
+
 # Number of days between full backups.
 FULL_BACKUP_INTERVAL_DAYS=14
 
-# Number of *past* backup chains to keep, in addition to the current one.
-# KEEP_CHAINS=1 means you will have the current chain and one complete old chain.
-KEEP_CHAINS=1
+# Days to keep a full backup and its entire chain.
+# After this period, the whole chain is deleted.
+KEEP_FULL_DAYS=30
+
+# Days to keep individual incremental backups in older (but retained) chains.
+# This allows you to prune daily backups while keeping the full ones for longer.
+KEEP_INCREMENTAL_DAYS=7
 ```
 
 Set secure permissions for this file:
@@ -144,4 +150,57 @@ podman run --rm -it \
   localhost/postgres-backup:latest restore /backups/2025-05-15_02-00-10_incremental
 ```
 
-After the command completes, the directory `/var/lib/pgbackups/restore` on your host will contain a full, restored PostgreSQL data directory. You can then copy this directory to your new database server, set up `recovery.signal`, and start PostgreSQL to perform Point-in-Time Recovery using your archived WAL files.
+After the command completes, the directory `/var/lib/pgbackups/restore` on your host will contain a full, restored PostgreSQL data directory. You can then copy this directory to your new database server, create a `recovery.signal` file, and start PostgreSQL to perform Point-in-Time Recovery using your archived WAL files.
+
+## Configuring Your Backup Strategy
+
+This tool uses a flexible, two-tiered retention policy controlled by two environment variables. Understanding how they interact is key to designing a strategy that fits your needs.
+
+-   `KEEP_FULL_DAYS`: Controls the maximum age of a **full backup**. If a full backup is older than this value, it and **all of its incremental backups** are deleted together as a complete chain.
+-   `KEEP_INCREMENTAL_DAYS`: Controls the maximum age of **individual incremental backups** within an older, retained chain.
+
+**The Golden Rule:** The most recent backup chain is **always kept**, regardless of these settings. Pruning only applies to older, completed chains.
+
+### Example Strategies
+
+Here are a few common scenarios to illustrate how you can configure the script.
+
+#### Strategy 1: Standard (Default) - Daily history for a week, monthly for longer.
+
+You want to restore to any specific day within the last week. For anything older, you're happy with just having the full backups available for a month.
+
+*   **Configuration:**
+    ```ini
+    KEEP_FULL_DAYS=30
+    KEEP_INCREMENTAL_DAYS=7
+    ```
+*   **Outcome:**
+    *   You will always have the current chain (up to 14 days of backups).
+    *   For older chains, the full backup will be kept for up to 30 days.
+    *   However, any *incremental* backups in that old chain that are older than 7 days will be deleted to save space. This leaves you with "orphaned" full backups for long-term retention, while cleaning up the daily clutter.
+
+#### Strategy 2: Long-Term Archival - Keep fulls for a year, incrementals for two weeks.
+
+You have compliance requirements to keep monthly or bi-weekly snapshots for a long time, but you don't need the daily history from months ago.
+
+*   **Configuration:**
+    ```ini
+    KEEP_FULL_DAYS=365
+    KEEP_INCREMENTAL_DAYS=14
+    ```
+*   **Outcome:**
+    *   Your full backups will be preserved for an entire year.
+    *   To save significant space, daily (incremental) backups from old chains will be deleted once they are over two weeks old.
+
+#### Strategy 3: Short-Term Retention - Keep everything for two weeks, then delete.
+
+You only care about short-term operational recovery and don't need long-term archives.
+
+*   **Configuration:**
+    ```ini
+    KEEP_FULL_DAYS=14
+    KEEP_INCREMENTAL_DAYS=14
+    ```
+*   **Outcome:**
+    *   As soon as a new full backup is created (starting a new chain), the previous chain becomes eligible for pruning.
+    *   Because its full backup will be ~14 days old, it will be deleted entirely on the next run. This effectively keeps a rolling ~14-28 day window of all backups.
