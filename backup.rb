@@ -11,10 +11,13 @@ require 'open3'
 BACKUP_DIR = '/backups'
 RESTORE_DIR = '/restore'
 FULL_BACKUP_INTERVAL_DAYS = (ENV['FULL_BACKUP_INTERVAL_DAYS'] || 14).to_i
-KEEP_CHAINS = (ENV['KEEP_CHAINS'] || 1).to_i # Number of *past* chains to keep
+# New Retention Policy:
+KEEP_FULL_DAYS = (ENV['KEEP_FULL_DAYS'] || 30).to_i
+KEEP_INCREMENTAL_DAYS = (ENV['KEEP_INCREMENTAL_DAYS'] || 7).to_i
 
 # Default to the path for Postgres 17 client tools, which are not always in the main PATH.
 PG_BIN_DIR = ENV['PG_BIN_DIR'] || '/usr/lib/postgresql/17/bin'
+SECONDS_IN_A_DAY = 24 * 3600.0 # Use a float for precise division
 
 # --- Helper Functions ---
 
@@ -58,7 +61,7 @@ def read_metadata(backup_path)
   metadata_file = File.join(backup_path, 'metadata.json')
   return nil unless File.exist?(metadata_file)
 
-  JSON.parse(File.read(metadata_file))
+  JSON.parse(File.read(metadata_file), symbolize_names: true)
 end
 
 # --- Core Logic ---
@@ -75,11 +78,11 @@ def perform_backup
   chain_start_path = nil
 
   if metadata
-    chain_start_path = metadata['chain_start']
+    chain_start_path = metadata[:chain_start]
     last_full_metadata = read_metadata(chain_start_path)
-    last_full_time = Time.parse(last_full_metadata['timestamp'])
+    last_full_time = Time.parse(last_full_metadata[:timestamp])
 
-    if (Time.now - last_full_time) / (24 * 3600) < FULL_BACKUP_INTERVAL_DAYS
+    if (Time.now - last_full_time) / SECONDS_IN_A_DAY < FULL_BACKUP_INTERVAL_DAYS
       is_full_backup = false
       parent_backup_path = last_backup_path
       log "Last full backup is recent. Performing an incremental backup."
@@ -100,7 +103,7 @@ def perform_backup
   # Construct pg_basebackup command using the helper
   # It automatically uses PGPASSWORD, PGUSER, PGHOST, etc.
   base_cmd = "#{pg_command('pg_basebackup')} --verbose --pgdata='#{current_backup_path}' --format=p"
-  
+
   if is_full_backup
     execute_command(base_cmd)
     chain_start_path = current_backup_path # This backup starts a new chain
@@ -124,33 +127,72 @@ def perform_backup
 end
 
 def perform_prune
-  log "Starting pruning process. Keeping current chain + #{KEEP_CHAINS} previous chain(s)."
+  log "Starting pruning process with policy: Keep fulls for #{KEEP_FULL_DAYS} days, incrementals for #{KEEP_INCREMENTAL_DAYS} days."
   all_backups = find_all_backups(BACKUP_DIR)
+  return log('No backups found to prune.') if all_backups.empty?
 
   # Group backups into chains using our 'chain_start' metadata key
-  chains = all_backups.group_by { |path| read_metadata(path)['chain_start'] }
-  
-  # A chain's identity is its start path. Sort chains by their start time.
-  sorted_chains = chains.keys.sort.map { |chain_start_path| chains[chain_start_path] }
+  chains = all_backups.group_by { |path| read_metadata(path)[:chain_start] }
+  sorted_chain_starts = chains.keys.sort
+  now = Time.now
 
   # The last chain is the current, active one. We always keep it.
-  # We also keep KEEP_CHAINS number of chains before the current one.
-  return log 'No old chains to prune.' if sorted_chains.length <= (1 + KEEP_CHAINS)
+  current_chain_start = sorted_chain_starts.pop
+  if current_chain_start.nil?
+    log('No complete chains found to prune.')
+    return
+  end
+  log "Keeping the current chain (starting with #{current_chain_start}) untouched."
 
-  chains_to_prune_count = sorted_chains.length - (1 + KEEP_CHAINS)
-  chains_to_prune = sorted_chains.first(chains_to_prune_count)
+  # Now, process all older chains for pruning
+  backups_to_delete = []
+  log "Found #{sorted_chain_starts.length} past chain(s) to evaluate for pruning."
 
-  log "Found #{sorted_chains.length} chain(s). Pruning #{chains_to_prune.length} chain(s)."
+  sorted_chain_starts.each do |chain_start_path|
+    chain = chains[chain_start_path]
+    full_backup_metadata = read_metadata(chain_start_path)
 
-  chains_to_prune.each do |chain|
-    log "Pruning chain starting with: #{chain.first}"
+    # This should not happen if our logic is correct, but as a safeguard:
+    unless full_backup_metadata
+      log "  WARNING: Could not read metadata for chain start: #{chain_start_path}. Skipping."
+      next
+    end
+
+    full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
+
+    # 1. Check if the entire chain is expired based on the full backup's age
+    if full_backup_age_days > KEEP_FULL_DAYS
+      log "  - Pruning entire chain starting at #{chain_start_path} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{KEEP_FULL_DAYS} days)."
+      backups_to_delete.concat(chain)
+      next # Move to the next chain
+    end
+
+    # 2. If the full backup is kept, check its incrementals for expiration
+    log "  - Evaluating chain starting at #{chain_start_path} (full backup is within retention period)."
     chain.each do |backup_path|
-      log "  Deleting #{backup_path}"
-      FileUtils.rm_rf(backup_path)
+      metadata = read_metadata(backup_path)
+      next if metadata[:type] == 'full' # Skip the full backup itself
+
+      incremental_age_days = (now - Time.parse(metadata[:timestamp])) / SECONDS_IN_A_DAY
+      if incremental_age_days > KEEP_INCREMENTAL_DAYS
+        log "    - Pruning incremental #{File.basename(backup_path)} (#{incremental_age_days.to_i} days old, exceeds #{KEEP_INCREMENTAL_DAYS} days)."
+        backups_to_delete << backup_path
+      end
+    end
+  end
+
+  if backups_to_delete.empty?
+    log 'No backups met the pruning criteria.'
+  else
+    log "Deleting #{backups_to_delete.uniq.count} expired backup(s)..."
+    backups_to_delete.uniq.each do |path|
+      log "  Deleting #{path}"
+      FileUtils.rm_rf(path)
     end
   end
   log 'Pruning complete.'
 end
+
 
 def perform_restore(target_backup_path)
   log "Starting restore process for: #{target_backup_path}"
@@ -163,7 +205,7 @@ def perform_restore(target_backup_path)
   # Build the chain of backups needed for restore
   restore_chain = []
   current_path = target_backup_path
-  
+
   while current_path
     metadata = read_metadata(current_path)
     unless metadata
@@ -171,7 +213,7 @@ def perform_restore(target_backup_path)
       exit 1
     end
     restore_chain.unshift(current_path) # Prepend to keep chronological order
-    current_path = metadata['parent']
+    current_path = metadata[:parent]
   end
 
   log "Restore requires the following backup chain (oldest to newest):"
@@ -205,10 +247,11 @@ def show_help
       ruby backup.rb --help
 
     Configuration via Environment Variables:
-      FULL_BACKUP_INTERVAL_DAYS : Days between full backups (default: 14)
-      KEEP_CHAINS               : Number of past backup chains to keep (default: 1)
-      PG_BIN_DIR                : Path to PostgreSQL binaries (e.g., /usr/lib/postgresql/17/bin)
-      PG*                       : Standard PostgreSQL variables (PGHOST, PGUSER, PGPASSWORD, etc.)
+      FULL_BACKUP_INTERVAL_DAYS : Days between full backups (default: 14).
+      KEEP_FULL_DAYS            : Days to keep a full backup and its entire chain (default: 30).
+      KEEP_INCREMENTAL_DAYS     : Days to keep individual incremental backups in retained chains (default: 7).
+      PG_BIN_DIR                : Path to PostgreSQL binaries (e.g., /usr/lib/postgresql/17/bin).
+      PG*                       : Standard PostgreSQL variables (PGHOST, PGUSER, PGPASSWORD, etc.).
   HELP
 end
 
