@@ -6,9 +6,6 @@ steps:
   container:
     image: quay.io/buildah/stable:latest
     privileged: true
-    volumes:
-      - ci-cache:/var/lib/containers/storage
-      - /etc/containers/registries.conf.d/:/etc/containers/registries.conf.d/
     environment:
       PASSWORD:
         from_secret: forgejo_token
