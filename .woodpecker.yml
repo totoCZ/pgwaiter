@@ -21,4 +21,4 @@ steps:
       - buildah bud -t $IMAGE .
       - buildah push $IMAGE
       - buildah login -u totoCZ -p "$PASSWORD_GITHUB" ghcr.io
-      - buildah push ghcr.io/totoCZ/${CI_REPO_NAME}:latest
+      - buildah push $IMAGE ghcr.io/totoCZ/${CI_REPO_NAME}:latest
