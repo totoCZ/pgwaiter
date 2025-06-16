@@ -5,7 +5,6 @@ when:
 steps:
   container:
     image: quay.io/buildah/stable:latest
-    privileged: true
     environment:
       PASSWORD:
         from_secret: forgejo_token
