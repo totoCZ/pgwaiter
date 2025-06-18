@@ -22,6 +22,11 @@ TEST_TEMP_DIR = ENV['BACKUP_DIR']
 class TestBackupPruning < Minitest::Test
   # This setup runs before each test. It ensures a clean environment.
   def setup
+    # Reset ENV variables to a known default state before every test.
+    # This prevents one test from affecting another ("test pollution").
+    ENV['KEEP_FULL_DAYS'] = '30'
+    ENV['KEEP_INCREMENTAL_DAYS'] = '7'
+
     FileUtils.rm_rf(TEST_TEMP_DIR)
     FileUtils.mkdir_p(TEST_TEMP_DIR)
     @now = Time.parse('2023-01-15T12:00:00Z')
