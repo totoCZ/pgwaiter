@@ -31,6 +31,7 @@ TEST_TEMP_DIR = ENV['BACKUP_DIR']
 
 class TestBackupPruning < Minitest::Test
   # This setup method runs before each test.
+
   def setup
     # The directory is created once outside the test class.
     # We just need to clean and recreate it for each test run to ensure isolation.
@@ -49,8 +50,9 @@ class TestBackupPruning < Minitest::Test
     # Scenario 2: A mid-age chain (full < 30 days, oldest incremental > 7 days).
     # EXPECTATION: The full backup is KEPT, its incrementals are DELETED.
     chain2_full = create_mock_backup(type: 'full', timestamp: @now - 20 * SECONDS_IN_A_DAY)
-    create_mock_backup(type: 'incremental', parent: chain2_full, timestamp: @now - 10 * SECONDS_IN_A_DAY)
-    create_mock_backup(type: 'incremental', parent: chain2_full, timestamp: @now - 9 * SECONDS_IN_A_DAY)
+    # --- FIX: Create a proper linear chain ---
+    chain2_inc1 = create_mock_backup(type: 'incremental', parent: chain2_full, timestamp: @now - 10 * SECONDS_IN_A_DAY)
+    create_mock_backup(type: 'incremental', parent: chain2_inc1, timestamp: @now - 9 * SECONDS_IN_A_DAY)
     
     # Scenario 3: A recent, active chain (full and incrementals are new).
     # EXPECTATION: The entire chain is KEPT because it's the most recent one.
