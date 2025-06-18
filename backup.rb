@@ -11,9 +11,16 @@ require 'open3'
 BACKUP_DIR = ENV['BACKUP_DIR'] || '/backups'
 RESTORE_DIR = ENV['RESTORE_DIR'] || '/restore'
 FULL_BACKUP_INTERVAL_DAYS = (ENV['FULL_BACKUP_INTERVAL_DAYS'] || 14).to_i
-# New Retention Policy:
-KEEP_FULL_DAYS = (ENV['KEEP_FULL_DAYS'] || 30).to_i
-KEEP_INCREMENTAL_DAYS = (ENV['KEEP_INCREMENTAL_DAYS'] || 7).to_i
+
+## FIX 1: Convert constants to methods to read ENV at runtime.
+# This ensures that tests can modify the environment and the script will see the changes.
+def keep_full_days
+  (ENV['KEEP_FULL_DAYS'] || 30).to_i
+end
+
+def keep_incremental_days
+  (ENV['KEEP_INCREMENTAL_DAYS'] || 7).to_i
+end
 
 # Default to the path for Postgres 17 client tools, which are not always in the main PATH.
 PG_BIN_DIR = ENV['PG_BIN_DIR'] || '/usr/lib/postgresql/17/bin'
@@ -136,17 +143,19 @@ end
 
 def perform_prune
   log "Starting pruning process with policy:"
-  log "  - Full backups (and their chains) are kept for #{KEEP_FULL_DAYS} days."
-  log "  - For retained chains, all incrementals are kept if the OLDEST incremental is newer than #{KEEP_INCREMENTAL_DAYS} days."
+  # Use the new methods to get current configuration
+  log "  - Full backups (and their chains) are kept for #{keep_full_days} days."
+  log "  - For retained chains, all incrementals are kept if the OLDEST incremental is newer than #{keep_incremental_days} days."
 
-  all_backup_paths = find_all_backups(BACKUP_DIR)
-  return log('No backups found to prune.') if all_backup_paths.empty?
+  ## FIX 2: Get ALL directories, not just those with metadata, so we can find and rename invalid ones.
+  all_possible_backup_paths = Dir.glob(File.join(BACKUP_DIR, '*')).select { |f| File.directory?(f) }.sort
+  return log('No backups found to prune.') if all_possible_backup_paths.empty?
 
   # --- REFACTOR: Partition backups into valid and corrupt sets first ---
   valid_backups = []
   corrupt_backups = []
 
-  all_backup_paths.each do |path|
+  all_possible_backup_paths.each do |path|
     begin
       metadata = read_metadata(path)
       # A valid backup must have readable metadata with essential keys.
@@ -166,6 +175,9 @@ def perform_prune
     log "Found #{corrupt_backups.length} backup(s) with missing or corrupt metadata. Quarantining them."
     corrupt_backups.each do |path|
       basename = File.basename(path)
+      # Avoid re-renaming an already invalid directory
+      next if basename.start_with?('Invalid_')
+      
       new_basename = "Invalid_#{basename}"
       new_path = File.join(File.dirname(path), new_basename)
       # In case of collision, add a timestamp to the renamed directory.
@@ -213,7 +225,8 @@ def perform_prune
     full_backup_metadata = read_metadata(chain_start_path) # Assumed to be valid from partitioning
 
     full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
-    if full_backup_age_days <= KEEP_FULL_DAYS
+    # Use the new method for the check
+    if full_backup_age_days <= keep_full_days
       log "  - Keeping full backup #{File.basename(chain_start_path)} (it's #{full_backup_age_days.to_i} days old)."
       valid_backups_to_keep << chain_start_path
 
@@ -226,15 +239,16 @@ def perform_prune
         oldest_incremental_age_days = (now - Time.parse(oldest_incremental_metadata[:timestamp])) / SECONDS_IN_A_DAY
         log "    - Oldest incremental is #{File.basename(oldest_incremental_path)} (#{oldest_incremental_age_days.to_i} days old)."
 
-        if oldest_incremental_age_days <= KEEP_INCREMENTAL_DAYS
-          log "    - Keeping all #{incrementals.count} incrementals as the oldest is within the #{KEEP_INCREMENTAL_DAYS}-day retention period."
+        # Use the new method for the check
+        if oldest_incremental_age_days <= keep_incremental_days
+          log "    - Keeping all #{incrementals.count} incrementals as the oldest is within the #{keep_incremental_days}-day retention period."
           valid_backups_to_keep.concat(incrementals)
         else
           log "    - Pruning all #{incrementals.count} incrementals as the oldest exceeds the retention period."
         end
       end
     else
-      log "  - Pruning entire chain starting at #{File.basename(chain_start_path)} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{KEEP_FULL_DAYS} days)."
+      log "  - Pruning entire chain starting at #{File.basename(chain_start_path)} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{keep_full_days} days)."
     end
   end
 
@@ -253,6 +267,7 @@ def perform_prune
   log 'Pruning complete.'
 end
 
+# ... (The rest of the file `perform_restore`, `show_help`, `main execution` remains unchanged)
 def perform_restore(target_backup_path)
   log "Starting restore process for: #{target_backup_path}"
 
