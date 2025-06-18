@@ -13,6 +13,7 @@ It is designed to be run via `podman` and integrated with `systemd` using Quadle
 -   **Containerized**: Runs inside a `podman` container, isolating dependencies.
 -   **Systemd Integration**: Uses Quadlet files for easy and robust scheduling with `systemd`.
 -   **Clear Metadata**: Avoids fragile filesystem parsing by saving its own `metadata.json` inside each backup folder.
+-   **Easy to use**: No continuous daemon, no duplicating WALs on disk, no WAL archive, no three different processes and a cron. Just take a snapshot when you want.
 
 ## Prerequisites
 
