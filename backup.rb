@@ -134,12 +134,10 @@ def perform_prune
   all_backups = find_all_backups(BACKUP_DIR)
   return log('No backups found to prune.') if all_backups.empty?
 
-  # Group backups into chains and get the start paths, sorted oldest to newest
   chains = all_backups.group_by { |path| read_metadata(path)[:chain_start] }
   sorted_chain_starts = chains.keys.sort
   now = Time.now
 
-  # The last chain is the current, active one. We always keep it.
   current_chain_start = sorted_chain_starts.pop
   if current_chain_start.nil?
     log('No complete chains found to evaluate for pruning.')
@@ -151,46 +149,51 @@ def perform_prune
   log "Found #{sorted_chain_starts.length} past chain(s) to evaluate for pruning."
 
   sorted_chain_starts.each do |chain_start_path|
-    chain_backups = chains[chain_start_path]
     full_backup_metadata = read_metadata(chain_start_path)
-
     unless full_backup_metadata
       log "  WARNING: Could not read metadata for chain start: #{chain_start_path}. Skipping."
       next
     end
 
-    # Rule 1: Prune the entire chain if the full backup is too old.
+    # --- RESTRUCTURED LOGIC ---
+
+    # Rule 1: Decide if the ENTIRE chain is too old.
     full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
     if full_backup_age_days > KEEP_FULL_DAYS
       log "  - Pruning entire chain starting at #{File.basename(chain_start_path)} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{KEEP_FULL_DAYS} days)."
-      backups_to_delete.concat(chain_backups)
-      next # Done with this chain, move to the next.
-    end
-
-    # Rule 2: Prune all incrementals if the oldest one is too old.
-    # The full backup itself will be kept as it passed Rule 1.
-    log "  - Evaluating incrementals for chain #{File.basename(chain_start_path)} (full backup is within retention period)."
-
-    incrementals = chain_backups.select { |p| read_metadata(p)[:type] == 'incremental' }.sort
-
-    if incrementals.empty?
-      log '    - No incrementals found in this chain.'
+      backups_to_delete.concat(chains[chain_start_path])
+      # This chain is gone, no need to check its incrementals.
       next
     end
 
-    # Find the oldest incremental (it's the first in the sorted list)
-    oldest_incremental_path = incrementals.first
-    oldest_incremental_metadata = read_metadata(oldest_incremental_path)
-    oldest_incremental_age_days = (now - Time.parse(oldest_incremental_metadata[:timestamp])) / SECONDS_IN_A_DAY
+    # If we reach here, the full backup itself is being kept.
+    # Now, separately, decide if its incrementals should be pruned.
+    log "  - Evaluating incrementals for chain #{File.basename(chain_start_path)} (full backup is within retention period)."
+    
+    # Get only the incrementals from this chain.
+    incrementals_in_chain = chains[chain_start_path].select do |p|
+      # Don't try to read metadata for a path that might not exist or be a dir
+      meta = read_metadata(p)
+      meta && meta[:type] == 'incremental'
+    end.sort
 
-    log "    - Oldest incremental is #{File.basename(oldest_incremental_path)} (#{oldest_incremental_age_days.to_i} days old)."
-
-    # The core atomic logic:
-    if oldest_incremental_age_days > KEEP_INCREMENTAL_DAYS
-      log "    - Pruning all #{incrementals.count} incrementals in this chain as the oldest exceeds the #{KEEP_INCREMENTAL_DAYS}-day retention period."
-      backups_to_delete.concat(incrementals)
+    if incrementals_in_chain.empty?
+      log '    - No incrementals found in this chain to evaluate.'
+      # No 'next' here! We are done with this chain.
     else
-      log "    - Keeping all #{incrementals.count} incrementals as the oldest is within the retention period."
+      # Rule 2: Prune all incrementals if the oldest one is too old.
+      oldest_incremental_path = incrementals_in_chain.first
+      oldest_incremental_metadata = read_metadata(oldest_incremental_path)
+      oldest_incremental_age_days = (now - Time.parse(oldest_incremental_metadata[:timestamp])) / SECONDS_IN_A_DAY
+
+      log "    - Oldest incremental is #{File.basename(oldest_incremental_path)} (#{oldest_incremental_age_days.to_i} days old)."
+
+      if oldest_incremental_age_days > KEEP_INCREMENTAL_DAYS
+        log "    - Pruning all #{incrementals_in_chain.count} incrementals in this chain as the oldest exceeds the #{KEEP_INCREMENTAL_DAYS}-day retention period."
+        backups_to_delete.concat(incrementals_in_chain)
+      else
+        log "    - Keeping all #{incrementals_in_chain.count} incrementals as the oldest is within the retention period."
+      end
     end
   end
 
