@@ -171,7 +171,8 @@ def perform_prune
       backups_to_keep << chain_start_path
 
       # Rule 2: If the full backup is kept, decide if its incrementals should also be kept.
-      incrementals = chain_backups.select { |p| p != chain_start_path }.sort
+      # --- FIX: Use array subtraction for a more robust calculation. ---
+      incrementals = (chain_backups - [chain_start_path]).sort
 
       if incrementals.empty?
         log '    - No incrementals found in this chain to evaluate.'
