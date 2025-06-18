@@ -149,10 +149,9 @@ def perform_prune
   log "Found #{sorted_chain_starts.length} past chain(s) to evaluate for pruning."
 
   sorted_chain_starts.each do |chain_start_path|
-    chain = chains[chain_start_path]
+    chain_backups = chains[chain_start_path]
     full_backup_metadata = read_metadata(chain_start_path)
 
-    # This should not happen if our logic is correct, but as a safeguard:
     unless full_backup_metadata
       log "  WARNING: Could not read metadata for chain start: #{chain_start_path}. Skipping."
       next
@@ -160,24 +159,43 @@ def perform_prune
 
     full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
 
-    # 1. Check if the entire chain is expired based on the full backup's age
+    # 1. Pruning Strategy for Full Backups: If the full backup is too old, delete the entire chain.
     if full_backup_age_days > KEEP_FULL_DAYS
       log "  - Pruning entire chain starting at #{chain_start_path} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{KEEP_FULL_DAYS} days)."
-      backups_to_delete.concat(chain)
+      backups_to_delete.concat(chain_backups)
       next # Move to the next chain
     end
 
-    # 2. If the full backup is kept, check its incrementals for expiration
-    log "  - Evaluating chain starting at #{chain_start_path} (full backup is within retention period)."
-    chain.each do |backup_path|
-      metadata = read_metadata(backup_path)
-      next if metadata[:type] == 'full' # Skip the full backup itself
+    # 2. Pruning Strategy for Incrementals: Keep the full backup, but prune expired incrementals from the end of the chain.
+    #    An incremental chain is unbreakable. You can only remove items from the end (newest).
+    log "  - Evaluating incrementals for chain starting at #{chain_start_path} (full backup is within retention period)."
 
+    # Get only the incrementals, sorted chronologically (oldest to newest)
+    incrementals = chain_backups.filter { |p| read_metadata(p)[:type] == 'incremental' }.sort
+
+    # We iterate from newest to oldest to find the first one we need to keep.
+    # Everything newer than that "first-to-keep" one can be safely deleted.
+    incrementals_to_prune_in_this_chain = []
+    incrementals.reverse_each do |backup_path|
+      metadata = read_metadata(backup_path)
       incremental_age_days = (now - Time.parse(metadata[:timestamp])) / SECONDS_IN_A_DAY
+
       if incremental_age_days > KEEP_INCREMENTAL_DAYS
-        log "    - Pruning incremental #{File.basename(backup_path)} (#{incremental_age_days.to_i} days old, exceeds #{KEEP_INCREMENTAL_DAYS} days)."
-        backups_to_delete << backup_path
+        # This incremental is too old. It's a candidate for deletion.
+        incrementals_to_prune_in_this_chain << backup_path
+      else
+        # We found an incremental we must keep. This means its entire history is also required.
+        # Stop looking; we cannot delete any older incrementals in this chain.
+        log "    - Keeping #{File.basename(backup_path)} (#{incremental_age_days.to_i} days old) and all its predecessors."
+        break
       end
+    end
+
+    if incrementals_to_prune_in_this_chain.any?
+      log "    - Pruning #{incrementals_to_prune_in_this_chain.count} expired incremental(s) from the end of the chain."
+      backups_to_delete.concat(incrementals_to_prune_in_this_chain)
+    else
+      log '    - No incrementals in this chain met the pruning criteria.'
     end
   end
 
