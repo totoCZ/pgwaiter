@@ -139,55 +139,83 @@ def perform_prune
   log "  - Full backups (and their chains) are kept for #{KEEP_FULL_DAYS} days."
   log "  - For retained chains, all incrementals are kept if the OLDEST incremental is newer than #{KEEP_INCREMENTAL_DAYS} days."
 
-  all_backups = find_all_backups(BACKUP_DIR)
-  return log('No backups found to prune.') if all_backups.empty?
+  all_backup_paths = find_all_backups(BACKUP_DIR)
+  return log('No backups found to prune.') if all_backup_paths.empty?
 
-  # REFACTOR: Group backups by the basename of their chain start.
-  chains = all_backups.group_by { |path| read_metadata(path)[:chain_start] }
+  # --- REFACTOR: Partition backups into valid and corrupt sets first ---
+  valid_backups = []
+  corrupt_backups = []
+
+  all_backup_paths.each do |path|
+    begin
+      metadata = read_metadata(path)
+      # A valid backup must have readable metadata with essential keys.
+      if metadata && metadata[:chain_start] && metadata[:timestamp]
+        valid_backups << path
+      else
+        corrupt_backups << path
+      end
+    rescue JSON::ParserError, NoMethodError => e
+      log "  DEBUG: Detected corrupt or incomplete metadata for #{path}: #{e.class}"
+      corrupt_backups << path
+    end
+  end
+
+  # Step 1: Quarantine any corrupt backups by renaming them. They will be preserved.
+  unless corrupt_backups.empty?
+    log "Found #{corrupt_backups.length} backup(s) with missing or corrupt metadata. Quarantining them."
+    corrupt_backups.each do |path|
+      basename = File.basename(path)
+      new_basename = "Invalid_#{basename}"
+      new_path = File.join(File.dirname(path), new_basename)
+      # In case of collision, add a timestamp to the renamed directory.
+      new_path = "#{new_path}_#{Time.now.to_i}" if File.exist?(new_path)
+
+      log "  - Renaming '#{path}' to '#{new_path}' for manual inspection."
+      FileUtils.mv(path, new_path)
+    end
+  end
+
+  # Step 2: Run the pruning logic ONLY on the set of valid backups.
+  return log('No valid backups remain to be pruned.') if valid_backups.empty?
+
+  chains = valid_backups.group_by { |path| read_metadata(path)[:chain_start] }
   now = Time.now
-
-  # REFACTOR: Sort chains by the actual timestamp of their full backup (oldest to newest).
-  # This is robust and not dependent on directory names.
+  
   sorted_chain_start_basenames = chains.keys.compact.sort_by do |basename|
     chain_start_path = chains[basename].find { |p| File.basename(p) == basename }
     if chain_start_path && (metadata = read_metadata(chain_start_path))
       Time.parse(metadata[:timestamp])
     else
-      Time.at(0) # Sort inconsistent chains to the beginning to be pruned first
+      Time.at(0) # Sort inconsistent chains to the beginning
     end
   end
 
-  backups_to_keep = []
+  valid_backups_to_keep = []
 
   # Rule 0: Always keep the entire active (most recent) chain.
   current_chain_start_basename = sorted_chain_start_basenames.pop
   if current_chain_start_basename
-    log "Keeping the current chain (starting with #{current_chain_start_basename}) untouched."
-    backups_to_keep.concat(chains[current_chain_start_basename])
+    log "Keeping the current valid chain (starting with #{current_chain_start_basename}) untouched."
+    valid_backups_to_keep.concat(chains[current_chain_start_basename])
   end
 
-  # If there are no other chains to evaluate, we can stop.
   if sorted_chain_start_basenames.empty?
-    log('No past chains to evaluate for pruning.')
+    log('No past valid chains to evaluate for pruning.')
   else
-    log "Found #{sorted_chain_start_basenames.length} past chain(s) to evaluate for pruning."
+    log "Found #{sorted_chain_start_basenames.length} past valid chain(s) to evaluate for pruning."
   end
 
-  # Evaluate the remaining older chains
+  # Evaluate the remaining older valid chains
   sorted_chain_start_basenames.each do |chain_start_basename|
     chain_backups = chains[chain_start_basename]
-    # REFACTOR: Find the full path to the start of the chain.
     chain_start_path = chain_backups.find { |p| File.basename(p) == chain_start_basename }
-
-    unless chain_start_path && (full_backup_metadata = read_metadata(chain_start_path))
-      log "  WARNING: Could not find or read metadata for chain start: #{chain_start_basename}. Skipping."
-      next
-    end
+    full_backup_metadata = read_metadata(chain_start_path) # Assumed to be valid from partitioning
 
     full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
     if full_backup_age_days <= KEEP_FULL_DAYS
       log "  - Keeping full backup #{File.basename(chain_start_path)} (it's #{full_backup_age_days.to_i} days old)."
-      backups_to_keep << chain_start_path
+      valid_backups_to_keep << chain_start_path
 
       incrementals = (chain_backups - [chain_start_path]).sort
       if incrementals.empty?
@@ -200,7 +228,7 @@ def perform_prune
 
         if oldest_incremental_age_days <= KEEP_INCREMENTAL_DAYS
           log "    - Keeping all #{incrementals.count} incrementals as the oldest is within the #{KEEP_INCREMENTAL_DAYS}-day retention period."
-          backups_to_keep.concat(incrementals)
+          valid_backups_to_keep.concat(incrementals)
         else
           log "    - Pruning all #{incrementals.count} incrementals as the oldest exceeds the retention period."
         end
@@ -210,10 +238,11 @@ def perform_prune
     end
   end
 
-  backups_to_delete = all_backups - backups_to_keep
+  # Step 3: Determine what to delete by finding the difference between all *valid* backups and the ones we decided to keep.
+  backups_to_delete = valid_backups - valid_backups_to_keep
 
   if backups_to_delete.empty?
-    log 'No backups met the pruning criteria.'
+    log 'No valid backups met the pruning criteria.'
   else
     log "Deleting #{backups_to_delete.uniq.count} expired backup(s)..."
     backups_to_delete.uniq.each do |path|
