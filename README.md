@@ -24,8 +24,9 @@ It is designed to be run via `podman` and integrated with `systemd` using Quadle
 
 ## Slon
 
-<img src="contrib/slon.png" alt="test passed" width="300">
-
+<p align="center">
+<img src="contrib/slon.png" alt="test passed" width="400">
+</p>
 
 ## 1. Setup
 
