@@ -269,21 +269,23 @@ def show_help
 end
 
 # --- Main Execution ---
-case ARGV[0]
-when 'backup'
-  perform_backup
-when 'restore'
-  if ARGV[1]
-    perform_restore(ARGV[1])
+if __FILE__ == $0
+  case ARGV[0]
+  when 'backup'
+    perform_backup
+  when 'restore'
+    if ARGV[1]
+      perform_restore(ARGV[1])
+    else
+      log 'ERROR: Restore command requires a path to the target backup directory.'
+      show_help
+      exit 1
+    end
+  when '--help', '-h', nil
+    show_help
   else
-    log 'ERROR: Restore command requires a path to the target backup directory.'
+    log "ERROR: Unknown command '#{ARGV[0]}'."
     show_help
     exit 1
   end
-when '--help', '-h', nil
-  show_help
-else
-  log "ERROR: Unknown command '#{ARGV[0]}'."
-  show_help
-  exit 1
 end
