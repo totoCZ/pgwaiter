@@ -3,8 +3,25 @@ when:
   branch: ${CI_REPO_DEFAULT_BRANCH}
 
 steps:
+  syntax-check:
+    image: docker.io/ruby:3.4-slim
+    name: Lint Ruby Code
+    commands:
+      - echo "--- Checking backup.rb syntax..."
+      - ruby -c backup.rb
+      - echo "--- Checking test_backup_pruning.rb syntax..."
+      - ruby -c test_backup_pruning.rb
+
+  test-pruning:
+    image: docker.io/ruby:3.4-slim
+    name: Run Pruning Logic Tests
+    depends_on: [syntax-check]
+    commands:
+      - ruby test_backup_pruning.rb
+
   container:
     image: quay.io/buildah/stable:latest
+    depends_on: [test-pruning]
     privileged: true
     environment:
       PASSWORD:
