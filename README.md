@@ -22,6 +22,11 @@ It is designed to be run via `podman` and integrated with `systemd` using Quadle
 -   A host OS that uses `systemd` (e.g., Fedora, CentOS, Ubuntu 22.04+).
 -   Postgres configured with `summarize_wal` enabled and `wal_summary_keep_time` greater than the interval between your incremental backups (the default of `10d` is usually sufficient for daily backups).
 
+## Slon
+
+<img src="contrib/slon.png" alt="test passed" width="300">
+
+
 ## 1. Setup
 
 ### Step 1: Build the Container Image
