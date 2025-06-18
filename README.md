@@ -154,30 +154,33 @@ After the command completes, the directory `/var/lib/pgbackups/restore` on your 
 
 ## Configuring Your Backup Strategy
 
-This tool uses a flexible, two-tiered retention policy controlled by two environment variables. Understanding how they interact is key to designing a strategy that fits your needs.
+This tool uses a flexible, two-tiered retention policy controlled by environment variables. Understanding how they interact is key to designing a strategy that fits your needs.
 
--   `KEEP_FULL_DAYS`: Controls the maximum age of a **full backup**. If a full backup is older than this value, it and **all of its incremental backups** are deleted together as a complete chain.
--   `KEEP_INCREMENTAL_DAYS`: Controls the maximum age of **individual incremental backups** within an older, retained chain.
+-   `KEEP_FULL_DAYS`: Controls the maximum age of a **full backup**. If a full backup is older than this value, it and **all of its associated incremental backups** are deleted together as a complete chain. This is the ultimate lifespan of any backup.
 
-**The Golden Rule:** The most recent backup chain is **always kept**, regardless of these settings. Pruning only applies to older, completed chains.
+-   `KEEP_INCREMENTAL_DAYS`: Controls the retention of an **entire set of incremental backups** for a given chain. If the **oldest** incremental in a chain is older than this value, then **all incrementals in that chain are deleted together**, leaving only the full backup for long-term retention. This treats the incremental history as a single, atomic unit.
+
+**The Golden Rule:** The most recent backup chain (the one currently being added to) is **always kept fully intact**, regardless of these settings. Pruning only applies to older, completed chains.
 
 ### Example Strategies
 
 Here are a few common scenarios to illustrate how you can configure the script.
 
-#### Strategy 1: Standard (Default) - Daily history for a week, monthly for longer.
+#### Strategy 1: Standard (Default) - Granular history for a week, long-term fulls for a month.
 
-You want to restore to any specific day within the last week. For anything older, you're happy with just having the full backups available for a month.
+You want to restore to any specific point within the last week. For anything older, you're happy with just having the full backups available.
 
 *   **Configuration:**
     ```ini
+    FULL_BACKUP_INTERVAL_DAYS=14 # (default)
     KEEP_FULL_DAYS=30
     KEEP_INCREMENTAL_DAYS=7
     ```
 *   **Outcome:**
-    *   You will always have the current chain (up to 14 days of backups).
-    *   For older chains, the full backup will be kept for up to 30 days.
-    *   However, any *incremental* backups in that old chain that are older than 7 days will be deleted to save space. This leaves you with "orphaned" full backups for long-term retention, while cleaning up the daily clutter.
+    *   You will always have the current, active chain (up to 14 days of granular backups).
+    *   For an older chain, the script checks its very *first* incremental backup.
+        *   If that first incremental is now **older than 7 days**, all of its following incrementals are deleted at once. This cleanly retires the granular history, leaving only the full backup for long-term storage (which will be kept for up to 30 days).
+        *   If that first incremental is **7 days old or newer**, the entire set of incrementals for that chain is kept, preserving your granular restore points.
 
 #### Strategy 2: Long-Term Archival - Keep fulls for a year, incrementals for two weeks.
 
@@ -190,17 +193,19 @@ You have compliance requirements to keep monthly or bi-weekly snapshots for a lo
     ```
 *   **Outcome:**
     *   Your full backups will be preserved for an entire year.
-    *   To save significant space, daily (incremental) backups from old chains will be deleted once they are over two weeks old.
+    *   To save significant space, the entire incremental history for a given chain is pruned once its *oldest* incremental passes the 14-day mark. This gives you a two-week window for granular recovery on recent chains, while relying on the less-frequent full backups for long-term archival.
 
-#### Strategy 3: Short-Term Retention - Keep everything for two weeks, then delete.
+#### Strategy 3: Short-Term Retention - Keep a rolling window, then delete.
 
 You only care about short-term operational recovery and don't need long-term archives.
 
 *   **Configuration:**
     ```ini
+    FULL_BACKUP_INTERVAL_DAYS=14 # (default)
     KEEP_FULL_DAYS=14
     KEEP_INCREMENTAL_DAYS=14
     ```
 *   **Outcome:**
-    *   As soon as a new full backup is created (starting a new chain), the previous chain becomes eligible for pruning.
-    *   Because its full backup will be ~14 days old, it will be deleted entirely on the next run. This effectively keeps a rolling ~14-28 day window of all backups.
+    *   This configuration ensures that as soon as a new full backup is created (starting a new chain), the previous chain becomes eligible for pruning.
+    *   Because the old chain's full backup will be ~14 days old, it will be immediately targeted by the `KEEP_FULL_DAYS=14` rule. The entire old chain (full + all its incrementals) will be deleted on the next run.
+    *   This effectively keeps a clean, rolling ~14-28 day window of all backups.
