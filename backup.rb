@@ -127,11 +127,14 @@ def perform_backup
 end
 
 def perform_prune
-  log "Starting pruning process with policy: Keep fulls for #{KEEP_FULL_DAYS} days, incrementals for #{KEEP_INCREMENTAL_DAYS} days."
+  log "Starting pruning process with policy:"
+  log "  - Full backups (and their chains) are kept for #{KEEP_FULL_DAYS} days."
+  log "  - For retained chains, all incrementals are kept if the OLDEST incremental is newer than #{KEEP_INCREMENTAL_DAYS} days."
+
   all_backups = find_all_backups(BACKUP_DIR)
   return log('No backups found to prune.') if all_backups.empty?
 
-  # Group backups into chains using our 'chain_start' metadata key
+  # Group backups into chains and get the start paths, sorted oldest to newest
   chains = all_backups.group_by { |path| read_metadata(path)[:chain_start] }
   sorted_chain_starts = chains.keys.sort
   now = Time.now
@@ -139,12 +142,11 @@ def perform_prune
   # The last chain is the current, active one. We always keep it.
   current_chain_start = sorted_chain_starts.pop
   if current_chain_start.nil?
-    log('No complete chains found to prune.')
+    log('No complete chains found to evaluate for pruning.')
     return
   end
-  log "Keeping the current chain (starting with #{current_chain_start}) untouched."
+  log "Keeping the current chain (starting with #{File.basename(current_chain_start)}) untouched."
 
-  # Now, process all older chains for pruning
   backups_to_delete = []
   log "Found #{sorted_chain_starts.length} past chain(s) to evaluate for pruning."
 
@@ -157,48 +159,42 @@ def perform_prune
       next
     end
 
+    # Rule 1: Prune the entire chain if the full backup is too old.
     full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
-
-    # 1. Pruning Strategy for Full Backups: If the full backup is too old, delete the entire chain.
     if full_backup_age_days > KEEP_FULL_DAYS
-      log "  - Pruning entire chain starting at #{chain_start_path} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{KEEP_FULL_DAYS} days)."
+      log "  - Pruning entire chain starting at #{File.basename(chain_start_path)} (full backup is #{full_backup_age_days.to_i} days old, exceeds #{KEEP_FULL_DAYS} days)."
       backups_to_delete.concat(chain_backups)
-      next # Move to the next chain
+      next # Done with this chain, move to the next.
     end
 
-    # 2. Pruning Strategy for Incrementals: Keep the full backup, but prune expired incrementals from the end of the chain.
-    #    An incremental chain is unbreakable. You can only remove items from the end (newest).
-    log "  - Evaluating incrementals for chain starting at #{chain_start_path} (full backup is within retention period)."
+    # Rule 2: Prune all incrementals if the oldest one is too old.
+    # The full backup itself will be kept as it passed Rule 1.
+    log "  - Evaluating incrementals for chain #{File.basename(chain_start_path)} (full backup is within retention period)."
 
-    # Get only the incrementals, sorted chronologically (oldest to newest)
-    incrementals = chain_backups.filter { |p| read_metadata(p)[:type] == 'incremental' }.sort
+    incrementals = chain_backups.select { |p| read_metadata(p)[:type] == 'incremental' }.sort
 
-    # We iterate from newest to oldest to find the first one we need to keep.
-    # Everything newer than that "first-to-keep" one can be safely deleted.
-    incrementals_to_prune_in_this_chain = []
-    incrementals.reverse_each do |backup_path|
-      metadata = read_metadata(backup_path)
-      incremental_age_days = (now - Time.parse(metadata[:timestamp])) / SECONDS_IN_A_DAY
-
-      if incremental_age_days > KEEP_INCREMENTAL_DAYS
-        # This incremental is too old. It's a candidate for deletion.
-        incrementals_to_prune_in_this_chain << backup_path
-      else
-        # We found an incremental we must keep. This means its entire history is also required.
-        # Stop looking; we cannot delete any older incrementals in this chain.
-        log "    - Keeping #{File.basename(backup_path)} (#{incremental_age_days.to_i} days old) and all its predecessors."
-        break
-      end
+    if incrementals.empty?
+      log '    - No incrementals found in this chain.'
+      next
     end
 
-    if incrementals_to_prune_in_this_chain.any?
-      log "    - Pruning #{incrementals_to_prune_in_this_chain.count} expired incremental(s) from the end of the chain."
-      backups_to_delete.concat(incrementals_to_prune_in_this_chain)
+    # Find the oldest incremental (it's the first in the sorted list)
+    oldest_incremental_path = incrementals.first
+    oldest_incremental_metadata = read_metadata(oldest_incremental_path)
+    oldest_incremental_age_days = (now - Time.parse(oldest_incremental_metadata[:timestamp])) / SECONDS_IN_A_DAY
+
+    log "    - Oldest incremental is #{File.basename(oldest_incremental_path)} (#{oldest_incremental_age_days.to_i} days old)."
+
+    # The core atomic logic:
+    if oldest_incremental_age_days > KEEP_INCREMENTAL_DAYS
+      log "    - Pruning all #{incrementals.count} incrementals in this chain as the oldest exceeds the #{KEEP_INCREMENTAL_DAYS}-day retention period."
+      backups_to_delete.concat(incrementals)
     else
-      log '    - No incrementals in this chain met the pruning criteria.'
+      log "    - Keeping all #{incrementals.count} incrementals as the oldest is within the retention period."
     end
   end
 
+  # Perform the deletion
   if backups_to_delete.empty?
     log 'No backups met the pruning criteria.'
   else
@@ -210,7 +206,6 @@ def perform_prune
   end
   log 'Pruning complete.'
 end
-
 
 def perform_restore(target_backup_path)
   log "Starting restore process for: #{target_backup_path}"
@@ -266,8 +261,8 @@ def show_help
 
     Configuration via Environment Variables:
       FULL_BACKUP_INTERVAL_DAYS : Days between full backups (default: 14).
-      KEEP_FULL_DAYS            : Days to keep a full backup and its entire chain (default: 30).
-      KEEP_INCREMENTAL_DAYS     : Days to keep individual incremental backups in retained chains (default: 7).
+      KEEP_FULL_DAYS            : Days to keep a full backup. If a full backup is older than this, its entire chain (including all incrementals) is deleted (default: 30).
+      KEEP_INCREMENTAL_DAYS     : Days to keep incremental backups. If the OLDEST incremental in a chain is older than this, ALL incrementals in that chain are deleted, leaving only the full backup (default: 7).
       PG_BIN_DIR                : Path to PostgreSQL binaries (e.g., /usr/lib/postgresql/17/bin).
       PG*                       : Standard PostgreSQL variables (PGHOST, PGUSER, PGPASSWORD, etc.).
   HELP
