@@ -15,13 +15,11 @@ steps:
   test-pruning:
     image: docker.io/ruby:3.4-slim
     name: Run Pruning Logic Tests
-    depends_on: [syntax-check]
     commands:
       - ruby test_backup_pruning.rb
 
   container:
     image: quay.io/buildah/stable:latest
-    depends_on: [test-pruning]
     privileged: true
     environment:
       PASSWORD:
