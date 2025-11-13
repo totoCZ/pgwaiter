@@ -1,7 +1,7 @@
 # Use a slim, modern Ruby base image
 FROM docker.io/ruby:3.4-slim
 
-# Install PostgreSQL client utilities for version 17.
+# Install PostgreSQL client utilities for version 18.
 # To do this, we add the official PostgreSQL APT repository, as the base image's
 # OS (Debian 12 Bookworm) ships with PG15 by default.
 RUN apt-get update \
@@ -14,8 +14,8 @@ RUN apt-get update \
     && echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
     # Update package lists again to include the new repository
     && apt-get update \
-    # Install the specific PG17 client package
-    && apt-get install -y --no-install-recommends postgresql-client-17 \
+    # Install the specific PG18 client package
+    && apt-get install -y --no-install-recommends postgresql-client-18 \
     # Clean up to keep the image small
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
