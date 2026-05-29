@@ -34,7 +34,7 @@ jobs:
             -c "
             REGISTRY=git.hetmer.net &&
             IMAGE=$REGISTRY/${{ github.repository }}:latest &&
-            buildah login -u '${{ github.actor }}' -p '${{ secrets.FORGEJO_TOKEN }}' $REGISTRY &&
+            buildah login -u '${{ github.actor }}' -p '${{ secrets.CI_REGISTRY_PUSH }}' $REGISTRY &&
             buildah bud -t $IMAGE . &&
             buildah push $IMAGE
             "
