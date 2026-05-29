@@ -1,7 +1,7 @@
 # ══════════════════════════════════════════════════════
 # Stage 1 — base: Ruby + PostgreSQL 18 client on Alpine
 # ══════════════════════════════════════════════════════
-FROM ruby:4-alpine AS base
+FROM docker.io/ruby:4-alpine AS base
 
 # pg18 lives in Alpine's edge/community repo
 RUN apk add --no-cache \
