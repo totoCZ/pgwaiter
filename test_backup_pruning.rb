@@ -83,9 +83,7 @@ class TestBackupPruning < Minitest::Test
     recent_inc = create_mock_backup(type: 'incremental', parent: recent_full, timestamp: @now - 2 * SECONDS_IN_A_DAY)
 
     # ACT: Run the prune logic with a mocked time.
-    Time.stub :now, @now do
-      capture_io { perform_prune }
-    end
+    with_fixed_time(@now) { capture_io { perform_prune } }
 
     # ASSERT: Verify the outcome.
     remaining = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
@@ -108,9 +106,7 @@ class TestBackupPruning < Minitest::Test
     create_mock_backup(type: 'full', timestamp: @now - 5 * SECONDS_IN_A_DAY)
 
     # ACT
-    Time.stub :now, @now do
-      capture_io { perform_prune }
-    end
+    with_fixed_time(@now) { capture_io { perform_prune } }
 
     # ASSERT
     all_dirs = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
@@ -130,9 +126,7 @@ class TestBackupPruning < Minitest::Test
     recent_inc = create_mock_backup(type: 'incremental', parent: recent_full, timestamp: @now - 2 * SECONDS_IN_A_DAY)
 
     # ACT
-    Time.stub :now, @now do
-      capture_io { perform_prune }
-    end
+    with_fixed_time(@now) { capture_io { perform_prune } }
 
     # ASSERT
     remaining_basenames = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
@@ -150,9 +144,7 @@ class TestBackupPruning < Minitest::Test
     create_mock_backup(type: 'full', timestamp: @now - 5 * SECONDS_IN_A_DAY)
 
     # ACT
-    Time.stub :now, @now do
-      capture_io { perform_prune }
-    end
+    with_fixed_time(@now) { capture_io { perform_prune } }
 
     # ASSERT
     all_dirs = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
@@ -171,9 +163,7 @@ class TestBackupPruning < Minitest::Test
     create_mock_backup(type: 'full', timestamp: @now - 1 * SECONDS_IN_A_DAY)
 
     # ACT
-    Time.stub :now, @now do
-      capture_io { perform_prune }
-    end
+    with_fixed_time(@now) { capture_io { perform_prune } }
 
     # ASSERT
     all_dirs = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
@@ -185,6 +175,14 @@ class TestBackupPruning < Minitest::Test
   end
 
   private
+
+  def with_fixed_time(time)
+    original = Time.method(:now)
+    Time.define_singleton_method(:now) { time }
+    yield
+  ensure
+    Time.define_singleton_method(:now, &original)
+  end
 
   # Helper to check if a directory was renamed due to being invalid.
   def any_renamed_invalid?(dirs)
