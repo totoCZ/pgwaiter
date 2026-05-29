@@ -88,7 +88,7 @@ class TestBackupPruning < Minitest::Test
     end
 
     # ASSERT: Verify the outcome.
-    remaining = find_all_backups(TEST_TEMP_DIR).map { |p| File.basename(p) }
+    remaining = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
 
     refute_includes remaining, File.basename(old_full), "The 45-day-old full backup should have been pruned"
     assert_includes remaining, File.basename(mid_full), "The 20-day-old full backup should be kept"
@@ -104,7 +104,7 @@ class TestBackupPruning < Minitest::Test
 
     # ARRANGE
     long_full = create_mock_backup(type: 'full', timestamp: @now - 200 * SECONDS_IN_A_DAY)
-    create_mock_backup(type: 'incremental', parent: long_full, timestamp: @now - 20 * SECONDS_IN_A_DAY)
+    long_inc = create_mock_backup(type: 'incremental', parent: long_full, timestamp: @now - 20 * SECONDS_IN_A_DAY)
     create_mock_backup(type: 'full', timestamp: @now - 5 * SECONDS_IN_A_DAY)
 
     # ACT
@@ -115,7 +115,7 @@ class TestBackupPruning < Minitest::Test
     # ASSERT
     all_dirs = Dir.entries(TEST_TEMP_DIR).reject { |f| f.start_with?('.') }
     assert_includes all_dirs, File.basename(long_full), 'Long-term full (200 days old) should be kept'
-    assert all_dirs.none? { |d| d.include?((@now - 20 * SECONDS_IN_A_DAY).strftime('%Y-%m-%d')) }, 'Old incremental (20 days old) should be pruned'
+    refute_includes all_dirs, File.basename(long_inc), 'Old incremental (20 days old) should be pruned'
     assert_equal 2, all_dirs.count, "Should be 2 backups: the long-term full and the recent full"
   end
 

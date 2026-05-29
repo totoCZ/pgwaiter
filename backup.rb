@@ -41,10 +41,10 @@ def pg_command(name)
   name
 end
 
-# Executes a system command, streaming its output and checking for success.
+# Executes a system command (as an argument array), streaming its output and checking for success.
 def execute_command(command)
-  log "Executing: #{command}"
-  success = Open3.popen2e(command) do |_stdin, stdout_stderr, wait_thr|
+  log "Executing: #{command.join(' ')}"
+  success = Open3.popen2e(*command) do |_stdin, stdout_stderr, wait_thr|
     while (line = stdout_stderr.gets)
       puts line
     end
@@ -52,7 +52,7 @@ def execute_command(command)
   end
 
   unless success
-    log "ERROR: Command failed: #{command}"
+    log "ERROR: Command failed: #{command.join(' ')}"
     exit 1
   end
   log 'Command executed successfully.'
@@ -85,22 +85,25 @@ def perform_backup
   chain_start_path = nil
 
   if metadata
-    # REFACTOR: Resolve chain_start basename to its full path
     chain_start_basename = metadata[:chain_start]
-    chain_start_path = File.join(File.dirname(last_backup_path), chain_start_basename)
-    last_full_metadata = read_metadata(chain_start_path)
-
-    if last_full_metadata
-      last_full_time = Time.parse(last_full_metadata[:timestamp])
-      if (Time.now - last_full_time) / SECONDS_IN_A_DAY < FULL_BACKUP_INTERVAL_DAYS
-        is_full_backup = false
-        parent_backup_path = last_backup_path
-        log 'Last full backup is recent. Performing an incremental backup.'
-      else
-        log "Last full backup is older than #{FULL_BACKUP_INTERVAL_DAYS} days. Performing a new full backup."
-      end
+    if chain_start_basename.nil?
+      log "Warning: Last backup metadata is missing 'chain_start'. Starting a new full backup."
     else
-      log "Warning: Could not read metadata for chain start '#{chain_start_path}'. Starting a new full backup."
+      chain_start_path = File.join(File.dirname(last_backup_path), chain_start_basename)
+      last_full_metadata = read_metadata(chain_start_path)
+
+      if last_full_metadata
+        last_full_time = Time.parse(last_full_metadata[:timestamp])
+        if (Time.now - last_full_time) / SECONDS_IN_A_DAY < FULL_BACKUP_INTERVAL_DAYS
+          is_full_backup = false
+          parent_backup_path = last_backup_path
+          log 'Last full backup is recent. Performing an incremental backup.'
+        else
+          log "Last full backup is older than #{FULL_BACKUP_INTERVAL_DAYS} days. Performing a new full backup."
+        end
+      else
+        log "Warning: Could not read metadata for chain start '#{chain_start_path}'. Starting a new full backup."
+      end
     end
   else
     log 'No previous backups found. Performing initial full backup.'
@@ -110,17 +113,13 @@ def perform_backup
   timestamp = Time.now.utc.strftime('%Y-%m-%d_%H-%M-%S')
   current_backup_path = File.join(BACKUP_DIR, "#{timestamp}_#{backup_type}")
 
-  FileUtils.mkdir_p(current_backup_path)
-  log "Created backup directory: #{current_backup_path}"
-
-  base_cmd = "#{pg_command('pg_basebackup')} --verbose --pgdata='#{current_backup_path}' --format=p"
+  base_cmd = [pg_command('pg_basebackup'), '--verbose', "--pgdata=#{current_backup_path}", '--format=p']
 
   if is_full_backup
     execute_command(base_cmd)
-    chain_start_path = current_backup_path # This backup starts a new chain
+    chain_start_path = current_backup_path
   else
-    incremental_arg = "--incremental='#{File.join(parent_backup_path, 'backup_manifest')}'"
-    execute_command("#{base_cmd} #{incremental_arg}")
+    execute_command(base_cmd + ["--incremental=#{File.join(parent_backup_path, 'backup_manifest')}"])
   end
 
   # REFACTOR: Store parent and chain_start as relative directory names (basenames)
@@ -222,7 +221,11 @@ def perform_prune
   sorted_chain_start_basenames.each do |chain_start_basename|
     chain_backups = chains[chain_start_basename]
     chain_start_path = chain_backups.find { |p| File.basename(p) == chain_start_basename }
-    full_backup_metadata = read_metadata(chain_start_path) # Assumed to be valid from partitioning
+    unless chain_start_path
+      log "  - Warning: Full backup for chain '#{chain_start_basename}' not found (quarantined?). Pruning #{chain_backups.count} orphaned incremental(s)."
+      next
+    end
+    full_backup_metadata = read_metadata(chain_start_path)
 
     full_backup_age_days = (now - Time.parse(full_backup_metadata[:timestamp])) / SECONDS_IN_A_DAY
     # Use the new method for the check
@@ -308,7 +311,7 @@ def perform_restore(target_backup_path)
   FileUtils.mkdir_p(RESTORE_DIR)
   log "Cleaned and created restore directory: #{RESTORE_DIR}"
 
-  cmd = "#{pg_command('pg_combinebackup')} -o '#{RESTORE_DIR}' #{restore_chain.join(' ')}"
+  cmd = [pg_command('pg_combinebackup'), '-o', RESTORE_DIR] + restore_chain
   execute_command(cmd)
 
   log "Restore complete. Data is available in #{RESTORE_DIR}"
