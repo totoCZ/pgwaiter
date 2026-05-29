@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint Ruby Code
+        uses: docker://ruby:4-slim
+        with:
+          entrypoint: /bin/sh
+          args: -c "ruby -c backup.rb && ruby -c test_backup_pruning.rb"
+
+      - name: Run Pruning Tests
+        uses: docker://ruby:4-slim
+        with:
+          entrypoint: /bin/sh
+          args: -c "ruby test_backup_pruning.rb"
+
+      - name: Build and Push
+        uses: docker://quay.io/buildah/stable:latest
+        env:
+          BUILDAH_ISOLATION: chroot
+          _BUILDAH_STARTED_IN_USERNS: ""
+        with:
+          entrypoint: /bin/sh
+          args: >-
+            -c "
+            REGISTRY=git.hetmer.net &&
+            IMAGE=$REGISTRY/${{ github.repository }}:latest &&
+            buildah login -u '${{ github.actor }}' -p '${{ secrets.FORGEJO_TOKEN }}' $REGISTRY &&
+            buildah bud -t $IMAGE . &&
+            buildah push $IMAGE
+            "
