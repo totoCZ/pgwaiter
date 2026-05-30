@@ -23,7 +23,7 @@ def keep_incremental_days
 end
 
 # Default to the path for Postgres 17 client tools, which are not always in the main PATH.
-PG_BIN_DIR = ENV['PG_BIN_DIR'] || '/usr/lib/postgresql/17/bin'
+PG_BIN_DIR = ENV['PG_BIN_DIR'] || '/usr/bin'
 SECONDS_IN_A_DAY = 24 * 3600.0 # Use a float for precise division
 
 # --- Helper Functions ---
@@ -338,7 +338,7 @@ def show_help
       FULL_BACKUP_INTERVAL_DAYS : Days between full backups (default: 14).
       KEEP_FULL_DAYS            : Days to keep a full backup. If a full backup is older than this, its entire chain is deleted (default: 30).
       KEEP_INCREMENTAL_DAYS     : Days to keep incremental backups. If the OLDEST incremental in a chain is older, ALL incrementals in that chain are deleted (default: 7).
-      PG_BIN_DIR                : Path to PostgreSQL binaries (e.g., /usr/lib/postgresql/17/bin).
+      PG_BIN_DIR                : Path to PostgreSQL binaries (default: /usr/bin).
       PG*                       : Standard PostgreSQL variables (PGHOST, PGUSER, PGPASSWORD, etc.).
   HELP
 end
