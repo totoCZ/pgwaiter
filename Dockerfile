@@ -6,7 +6,8 @@ FROM docker.io/ruby:4-alpine AS base
 # pg18 lives in Alpine's edge/community repo
 RUN apk add --no-cache \
       --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
-      postgresql18-client
+      postgresql18-client \
+      postgresql18
 
 # ══════════════════════════════════════════════════════
 # Stage 2 — app: drop in the script, nothing else
